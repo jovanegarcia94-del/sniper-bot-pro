@@ -6,8 +6,8 @@ from supabase import create_client, Client
 
 # --- CONFIGURAÇÕES DO SUPABASE ---
 # Pegue esses dados em Settings > API no seu painel do Supabase
-SUPABASE_URL = https://wtsuborthuxxdxjruovt.supabase.co
-SUPABASE_KEY = sb_publishable_H5Tz0TiVQqMc_m8zqpruEg_H4AtYrwU
+SUPABASE_URL = "https://wtsuborthuxxdxjruovt.supabase.co"
+SUPABASE_KEY = "sb_publishable_H5Tz0TiVQqMc_m8zqpruEg_H4AtYrwU"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- IMPORTAÇÃO DA API LOCAL ---
