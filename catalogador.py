@@ -1,10 +1,8 @@
 from iqoptionapi.stable_api import IQ_Option
 import time
-from configobj import ConfigObj
 from datetime import datetime
 
-def catag(API):
-    config = ConfigObj('config.txt')
+def catag(API, niveis_mg=0, usar_mg=False):
     pares_abertos = []
     all_asset = API.get_all_open_time()
 
@@ -20,11 +18,11 @@ def catag(API):
     # Loop único para processar todos os pares
     for par in pares_abertos:
         try:
-            # Baixa velas de M1 uma única vez para MHI e Torres Gêmeas
+            # Baixa velas de M1
             velas_m1 = API.get_candles(par, 60, 120, time.time())
             
-            # --- LÓGICA MHI (Dentro do mesmo loop) ---
-            w, g1, g2, l = 0, 0, 0, 0
+            # --- LÓGICA MHI ---
+            w, g1, g2, l = 0,0,0,0
             for i in range(len(velas_m1)):
                 minutos = float(datetime.fromtimestamp(velas_m1[i]['from']).strftime('%M')[1:])
                 if (minutos == 5 or minutos == 0) and i >= 3:
@@ -45,8 +43,8 @@ def catag(API):
                 tot = w+g1+g2+l
                 resultado.append(['MHI', par, round(w/tot*100,2), round((w+g1)/tot*100,2), round((w+g1+g2)/tot*100,2)])
 
-            # --- LÓGICA TORRES GÊMEAS (Usa as mesmas velas_m1) ---
-            w, g1, g2, l = 0, 0, 0, 0
+            # --- LÓGICA TORRES GÊMEAS ---
+            w, g1, g2, l = 0,0,0,0
             for i in range(len(velas_m1)):
                 minutos = float(datetime.fromtimestamp(velas_m1[i]['from']).strftime('%M')[1:])
                 if (minutos == 4 or minutos == 9) and i >= 4:
@@ -66,7 +64,7 @@ def catag(API):
 
             # --- LÓGICA MHI M5 ---
             velas_m5 = API.get_candles(par, 300, 146, time.time())
-            w, g1, g2, l = 0, 0, 0, 0
+            w, g1, g2, l = 0,0,0,0
             for i in range(len(velas_m5)):
                 minutos = float(datetime.fromtimestamp(velas_m5[i]['from']).strftime('%M'))
                 if (minutos == 30 or minutos == 0) and i >= 3:
@@ -89,8 +87,6 @@ def catag(API):
 
         except: continue
 
-    # Ordenação baseada no config
-    n_gales = int(config['MARTINGALE']['niveis_martingale']) if config['MARTINGALE']['usar_martingale'] == 'S' else 0
-    linha = 2 if n_gales == 0 else 3 if n_gales == 1 else 4
-    
+    # Ordena usando níveis de martingale passado pelo app
+    linha = 2 if niveis_mg == 0 else 3 if niveis_mg == 1 else 4
     return sorted(resultado, key=lambda x: x[linha], reverse=True), linha
