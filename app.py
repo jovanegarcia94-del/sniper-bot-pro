@@ -1,252 +1,189 @@
 import streamlit as st
+import pandas as pd
 import time
 from iqoptionapi.stable_api import IQ_Option
-from datetime import datetime
 from catalogador import catag
-from supabase import create_client, Client
+from datetime import datetime
 
-# --- CONEXÃO COM O BANCO DE DADOS (SUPABASE) ---
-# Aqui os dados ficam salvos na nuvem em tempo real
-SUPABASE_URL = "https://wtsuborthuxxdxjruovt.supabase.co"
-SUPABASE_KEY = "sb_publishable_H5Tz0TiVQqMc_m8zqpruEg_H4AtYrwU"
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+st.set_page_config(page_title="Robô Trader Pro", layout="wide")
 
-ADMIN_EMAIL = "jovanegarcia94@gmail.com"
+# ---------------- ESTADOS ----------------
+if 'rodando' not in st.session_state:
+    st.session_state.rodando = False
+if 'lucro_sessao' not in st.session_state:
+    st.session_state.lucro_sessao = 0.0
+if 'historico' not in st.session_state:
+    st.session_state.historico = []
+if 'estrategia_usuario' not in st.session_state:
+    st.session_state.estrategia_usuario = "MHI"
 
-# --- FUNÇÕES DE BANCO DE DADOS (Substituindo o JSON pelo Supabase) ---
-def load_users():
-    try:
-        response = supabase.table("usuarios").select("*").execute()
-        # Converte a lista do banco em um dicionário para manter sua lógica original
-        return {u['email']: u for u in response.data}
-    except Exception as e:
-        st.error(f"Erro de conexão com o banco: {e}")
-        return {}
-
-def save_new_user(email, nome, senha):
-    data = {
-        "email": email,
-        "nome": nome,
-        "senha": senha,
-        "aprovado": False,
-        "data": str(datetime.now())
-    }
-    try:
-        supabase.table("usuarios").insert(data).execute()
-        return True
-    except:
-        return False
-
-def update_user_status(email, status):
-    try:
-        supabase.table("usuarios").update({"aprovado": status}).eq("email", email).execute()
-        return True
-    except:
-        return False
-
-# --- CONFIGURAÇÃO VISUAL ---
-st.set_page_config(page_title="SNIPER BOT PRO", layout="wide")
-
-# --- ESTADOS DE SESSÃO ---
-if 'logged_in' not in st.session_state: st.session_state.logged_in = False
-if 'user_email' not in st.session_state: st.session_state.user_email = ""
-if 'running' not in st.session_state: st.session_state.running = False
-if 'lucro_total' not in st.session_state: st.session_state.lucro_total = 0.0
-
-# --- TELA DE ACESSO ---
-if not st.session_state.logged_in:
-    st.title("🔐 SNIPER BOT - CONTROLE DE ACESSO")
-    aba_login, aba_cadastro = st.tabs(["Entrar no Sistema", "Solicitar Nova Conta"])
-    users = load_users()
-
-    with aba_login:
-        email_l = st.text_input("E-mail cadastrado").strip().lower()
-        senha_l = st.text_input("Senha", type="password")
-        if st.button("🚀 Acessar Robô", use_container_width=True):
-            if email_l in users and users[email_l]['senha'] == senha_l:
-                if users[email_l]['aprovado']:
-                    st.session_state.logged_in = True
-                    st.session_state.user_email = email_l
-                    st.rerun()
-                else:
-                    st.warning(f"⏳ Sua conta aguarda aprovação de {ADMIN_EMAIL}")
-            else:
-                st.error("❌ E-mail ou senha incorretos.")
-
-    with aba_cadastro:
-        novo_nome = st.text_input("Seu Nome")
-        novo_email = st.text_input("Seu E-mail").strip().lower()
-        nova_senha = st.text_input("Crie uma Senha", type="password")
-        if st.button("📩 Enviar para Aprovação", use_container_width=True):
-            if novo_email in users: st.error("E-mail já registrado.")
-            elif novo_email and nova_senha:
-                if save_new_user(novo_email, novo_nome, nova_senha):
-                    st.success("✅ Solicitação enviada! Aguarde a liberação do administrador.")
-                else:
-                    st.error("Erro ao salvar no banco.")
-    st.stop()
-
-# --- INTERFACE DO ROBÔ (EXATAMENTE COMO A ORIGINAL) ---
-st.markdown("""
-    <style>
-    .stApp { background-color: #06090f; color: #ffffff; }
-    .card { background: linear-gradient(145deg, #161b22, #0d1117); border: 1px solid #30363d; border-radius: 15px; padding: 20px; text-align: center; margin-bottom: 10px; }
-    .label { color: #8b949e; font-size: 12px; text-transform: uppercase; }
-    .value { font-size: 24px; font-weight: bold; margin: 5px 0; }
-    .win { color: #238636; } .loss { color: #da3633; } .warning { color: #f1c40f; }
-    </style>
-    """, unsafe_allow_html=True)
-
-abas_labels = ["🚀 OPERAÇÕES", "⚙️ CONFIGURAÇÕES"]
-if st.session_state.user_email == ADMIN_EMAIL:
-    abas_labels.append("🔑 PAINEL ADMIN")
-
-tabs = st.tabs(abas_labels)
-
-# --- ABA ADMIN ---
-if st.session_state.user_email == ADMIN_EMAIL:
-    with tabs[2]:
-        st.header("Gerenciamento de Usuários (Cloud)")
-        users = load_users()
-        for u_email, info in list(users.items()):
-            if u_email == ADMIN_EMAIL: continue
-            c_u1, c_u2, c_u3 = st.columns([2, 1, 1])
-            c_u1.write(f"**{info['nome']}** ({u_email})")
-            if info['aprovado']:
-                c_u2.success("Ativo")
-                if c_u3.button("Revogar", key="rev_"+u_email):
-                    update_user_status(u_email, False)
-                    st.rerun()
-            else:
-                c_u2.warning("Pendente")
-                if c_u3.button("Aprovar", key="app_"+u_email):
-                    update_user_status(u_email, True)
-                    st.rerun()
-
-# --- ABA CONFIGURAÇÕES (ORIGINAL) ---
-with tabs[1]:
-    st.header("⚙️ Ajustes de Trading")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        iq_email = st.text_input("E-mail IQ Option")
-        iq_senha = st.text_input("Senha IQ Option", type="password")
-        valor_entrada = st.number_input("Entrada ($)", min_value=1.0, value=2.0)
-    with col_b:
-        stop_win = st.number_input("Stop Win ($)", min_value=1.0, value=20.0)
-        stop_loss = st.number_input("Stop Loss ($)", min_value=1.0, value=10.0)
-        usar_gale = st.toggle("Martingale", value=True)
-        n_gales = st.number_input("Níveis", min_value=0, max_value=2, value=1) if usar_gale else 0
-        fator_gale = st.number_input("Multiplicador", value=2.2)
-
-# --- ABA OPERAÇÕES (ORIGINAL) ---
-with tabs[0]:
-    with st.sidebar:
-        st.info(f"👤 Logado como: {st.session_state.user_email}")
-        conta = st.selectbox("CONTA", ["PRACTICE", "REAL"])
-        estrat_alvo = st.selectbox("ESTRATÉGIA", ["MHI", "Torres Gêmeas", "MHI M5"])
-        filtro_90 = st.toggle("Filtro 90%+", value=True)
-        
-        if st.button("🚀 INICIAR", use_container_width=True, type="primary"):
-            if not iq_email: st.error("Configure o login da corretora!")
-            else: st.session_state.running = True
-        if st.button("🛑 PARAR", use_container_width=True):
-            st.session_state.running = False; st.rerun()
-        if st.button("🚪 SAIR DO SISTEMA"):
-            st.session_state.logged_in = False; st.rerun()
-
-  # Cards e Lógica de Operações permanecem idênticos
-    c1, c2, c3 = st.columns(3)
-    banca_card, lucro_card, status_card = c1.empty(), c2.empty(), c3.empty()
-    info_op = st.empty()
-
-    if st.session_state.running:
-        api = IQ_Option(iq_email, iq_senha)
-        check, _ = api.connect()
-        if check:
-            api.change_balance(conta)
-            while st.session_state.running:
-                try:
-                    # 1. Atualização Constante dos Cards
-                    saldo = api.get_balance()
-                    banca_card.markdown(f'<div class="card"><div class="label">💰 BANCA</div><div class="value">${saldo:,.2f}</div></div>', unsafe_allow_html=True)
-                    lucro_card.markdown(f'<div class="card"><div class="label">📈 LUCRO</div><div class="value {"win" if st.session_state.lucro_total >= 0 else "loss"}">${st.session_state.lucro_total:.2f}</div></div>', unsafe_allow_html=True)
-                    
-                    # 2. Blindagem de Conexão
-                    if not api.check_connect():
-                        status_card.markdown('<div class="card"><div class="value warning">RECONECTANDO...</div></div>', unsafe_allow_html=True)
-                        api.connect()
-                        time.sleep(5)
-                        continue
-
-                    # 3. Catalogação e Filtro
-                    lista, _ = catag(api)
-                    if filtro_90:
-                        dados = next((item for item in lista if item[0] == estrat_alvo and float(item[2]) >= 90), None)
-                    else:
-                        dados = next((item for item in lista if item[0] == estrat_alvo), None)
-
-                    if not dados:
-                        status_card.markdown('<div class="card"><div class="label">STATUS</div><div class="value warning">BUSCANDO SINAL...</div></div>', unsafe_allow_html=True)
-                        time.sleep(5)
-                        continue
-
-                    par, assertividade = dados[1], dados[2]
-                    ts = api.get_server_timestamp()
-                    minutos = float(datetime.fromtimestamp(ts).strftime('%M.%S'))
-                    
-                    status_card.markdown(f'<div class="card"><div class="label">{par} | {assertividade}%</div><div class="value" style="color:#58a6ff">⏰ {minutos:.2f}</div></div>', unsafe_allow_html=True)
-
-                    # 4. Verificação de Gatilho
-                    entrar = False
-                    if estrat_alvo == "MHI": entrar = (minutos >= 4.58 and minutos <= 5.00) or (minutos >= 9.58)
-                    elif estrat_alvo == "Torres Gêmeas": entrar = (minutos >= 3.58 and minutos <= 4.00) or (minutos >= 8.58)
-                    elif estrat_alvo == "MHI M5": entrar = (minutos >= 29.58 or minutos >= 59.58)
-
-                    if entrar:
-                        tf = 5 if "M5" in estrat_alvo else 1
-                        velas = api.get_candles(par, tf * 60, 4, ts)
-                        cores = ['Verde' if v['open'] < v['close'] else 'Vermelha' for v in velas]
-                        
-                        ultimas_3 = cores[-3:]
-                        direcao = 'put' if ultimas_3.count('Verde') > ultimas_3.count('Vermelha') else 'call'
-                        
-                        # --- EXECUÇÃO COM MARTINGALE ---
-                        valor_atual = valor_entrada
-                        for gale in range(int(n_gales) + 1):
-                            if not st.session_state.running: break
-                            
-                            status_card.markdown(f'<div class="card"><div class="label">{par}</div><div class="value win">ENTRANDO G{gale}</div></div>', unsafe_allow_html=True)
-                            
-                            ok, id_op = api.buy_digital_spot_v2(par, valor_atual, direcao, tf)
-                            if ok:
-                                resultado = 0
-                                while st.session_state.running:
-                                    status_win, resultado = api.check_win_digital_v2(id_op)
-                                    if status_win:
-                                        st.session_state.lucro_total += round(float(resultado), 2)
-                                        break
-                                    time.sleep(0.5)
-                                
-                                if resultado > 0: # VITÓRIA
-                                    break 
-                                else: # DERROTA -> PRÓXIMO GALE
-                                    valor_atual = round(valor_atual * fator_gale, 2)
-                            else:
-                                break
-                        
-                        time.sleep(30) # Trava para não entrar na mesma vela
-
-                    # 5. Gerenciamento de Stop
-                    if st.session_state.lucro_total >= stop_win or st.session_state.lucro_total <= (stop_loss * -1):
-                        st.session_state.running = False
-                        st.warning("🎯 Meta ou Stop Loss atingido!")
-                        st.rerun()
-
-                except Exception as e:
-                    # Silencia erros temporários de API para não fechar o bot
-                    time.sleep(1)
-                
-                time.sleep(1)
+# ---------------- FUNÇÃO DE ANÁLISE ----------------
+def analisar_entrada(api, ativo, estrategia):
+    timeframe = 300 if estrategia == 'MHI M5' else 60
+    qnt_velas = 4 if estrategia == 'Torres Gêmeas' else 3
+    
+    velas = api.get_candles(ativo, timeframe, qnt_velas, time.time())
+    cores = []
+    for v in velas:
+        if v['open'] < v['close']:
+            cores.append("Verde")
+        elif v['open'] > v['close']:
+            cores.append("Vermelha")
         else:
-            st.error("Erro de login na IQ Option. Verifique suas credenciais.")
-            st.session_state.running = False
+            cores.append("Doji")
+
+    direcao = None
+    if estrategia in ['MHI','MHI M5']:
+        if cores.count('Verde') > cores.count('Vermelha') and 'Doji' not in cores:
+            direcao = "put"
+        if cores.count('Verde') < cores.count('Vermelha') and 'Doji' not in cores:
+            direcao = "call"
+    elif estrategia == 'Torres Gêmeas':
+        if cores[0] == 'Verde':
+            direcao = "call"
+        if cores[0] == 'Vermelha':
+            direcao = "put"
+    return direcao
+
+# ---------------- DASHBOARD ----------------
+col1,col2,col3,col4 = st.columns(4)
+
+# pegar saldo se estiver conectado
+saldo = 0
+moeda = ""
+if 'api' in st.session_state:
+    try:
+        saldo = st.session_state.api.get_balance()
+        moeda = st.session_state.api.get_currency()
+    except:
+        saldo = 0
+simbolo = "$" if moeda == "USD" else "R$"
+
+with col1:
+    st.metric("Saldo Conta", f"{simbolo} {round(saldo,2)}")
+with col2:
+    st.metric("Lucro Sessão", f"{simbolo} {round(st.session_state.lucro_sessao,2)}")
+with col3:
+    status = "🟢 Rodando" if st.session_state.rodando else "🔴 Parado"
+    st.metric("Status", status)
+with col4:
+    st.metric("Trades", len(st.session_state.historico))
+
+# ---------------- SIDEBAR ----------------
+with st.sidebar:
+    st.header("Conexão")
+    conta_tipo = st.selectbox("Tipo de Conta", ["PRACTICE","REAL"])
+
+    if 'api' not in st.session_state:
+        email = st.text_input("Email")
+        senha = st.text_input("Senha", type="password")
+        if st.button("Conectar IQ Option"):
+            api = IQ_Option(email,senha)
+            check,_ = api.connect()
+            if check:
+                api.change_balance(conta_tipo)
+                st.session_state.api = api
+                st.success(f"Conectado na conta {conta_tipo}")
+                st.rerun()
+    else:
+        st.success("Conectado")
+        if st.button("Parar Bot"):
+            st.session_state.rodando = False
+
+# ---------------- ABAS ----------------
+aba1,aba2,aba3 = st.tabs(["Controle","Configurações","Histórico"])
+
+# ---------------- CONTROLE ----------------
+with aba1:
+    if not st.session_state.rodando:
+        if st.button("▶ Iniciar Robô"):
+            st.session_state.rodando = True
+            st.rerun()
+    else:
+        if st.button("⛔ Parar Robô"):
+            st.session_state.rodando = False
+
+# ---------------- CONFIGURAÇÕES ----------------
+with aba2:
+    st.subheader("Parâmetros do Bot")
+
+    st.session_state.estrategia_usuario = st.selectbox(
+        "Estratégia",
+        ["MHI","MHI M5","Torres Gêmeas"]
+    )
+
+    valor_entrada = st.number_input("Valor Entrada", value=2.5)
+    stop_win = st.number_input("Stop Win", value=4.0)
+    stop_loss = st.number_input("Stop Loss", value=3.0)
+    tipo = st.selectbox("Tipo Operação", ["digital","binaria"])
+    usar_mg = st.checkbox("Usar Martingale")
+    niveis_mg = st.number_input("Níveis Martingale", value=1)
+    fator_mg = st.number_input("Fator Martingale", value=2.0)
+    usar_soros = st.checkbox("Usar Soros")
+    niveis_soros = st.number_input("Níveis Soros", value=2)
+
+# ---------------- HISTÓRICO ----------------
+with aba3:
+    if len(st.session_state.historico) > 0:
+        df = pd.DataFrame(st.session_state.historico)
+        st.dataframe(df,use_container_width=True)
+    else:
+        st.info("Nenhum trade executado ainda")
+
+# ---------------- LOOP BOT ----------------
+if 'api' in st.session_state and st.session_state.rodando:
+    placeholder = st.empty()
+    while st.session_state.rodando:
+        with placeholder.container():
+            st.subheader("🔄 Ciclo de operação")
+            # Passando parâmetros para o catalogador sem depender de config.txt
+            lista,linha_idx = catag(
+                st.session_state.api,
+                niveis_mg=niveis_mg,
+                usar_mg=usar_mg
+            )
+            melhor = lista[0]
+            ativo = melhor[1]
+            estrategia = st.session_state.estrategia_usuario
+
+            st.write("Ativo:",ativo)
+            st.write("Estratégia:",estrategia)
+
+            direcao = analisar_entrada(st.session_state.api,ativo,estrategia)
+
+            if direcao:
+                st.success(f"Operando {direcao}")
+                if tipo == "digital":
+                    check,id = st.session_state.api.buy_digital_spot_v2(
+                        ativo, valor_entrada, direcao, 1
+                    )
+                else:
+                    check,id = st.session_state.api.buy(
+                        valor_entrada, ativo, direcao, 1
+                    )
+
+                if check:
+                    while True:
+                        time.sleep(1)
+                        if tipo == "digital":
+                            status,resultado = st.session_state.api.check_win_digital_v2(id)
+                        else:
+                            status,resultado = st.session_state.api.check_win_v4(id)
+                        if status:
+                            st.session_state.lucro_sessao += resultado
+                            st.session_state.historico.append({
+                                "ativo":ativo,
+                                "direcao":direcao,
+                                "resultado":resultado,
+                                "hora":datetime.now().strftime("%H:%M:%S")
+                            })
+                            break
+            else:
+                st.warning("Sem sinal")
+
+            if st.session_state.lucro_sessao >= stop_win or st.session_state.lucro_sessao <= -stop_loss:
+                st.error("Stop atingido")
+                st.session_state.rodando = False
+                break
+
+            time.sleep(10)
