@@ -5,6 +5,7 @@ from iqoptionapi.stable_api import IQ_Option
 from catalogador import catag
 from datetime import datetime
 
+# ---------------- CONFIGURAÇÃO DE PÁGINA ----------------
 st.set_page_config(page_title="Robô Trader Pro", layout="wide")
 
 # ---------------- ESTADOS ----------------
@@ -15,31 +16,30 @@ if 'lucro_sessao' not in st.session_state:
 if 'historico' not in st.session_state:
     st.session_state.historico = []
 
+if 'api' not in st.session_state:
+    st.session_state.api = None
+if 'conectado' not in st.session_state:
+    st.session_state.conectado = False
+if 'login_hash' not in st.session_state:
+    st.session_state.login_hash = None  # Para diferenciar logins
+
 # ---------------- FUNÇÃO DE ANÁLISE ----------------
 def analisar_entrada(api, ativo, estrategia):
     timeframe = 300 if estrategia == 'MHI M5' else 60
     qnt_velas = 4 if estrategia == 'Torres Gêmeas' else 3
-    
     velas = api.get_candles(ativo, timeframe, qnt_velas, time.time())
-    cores = []
-    for v in velas:
-        if v['open'] < v['close']:
-            cores.append("Verde")
-        elif v['open'] > v['close']:
-            cores.append("Vermelha")
-        else:
-            cores.append("Doji")
+    cores = ["Verde" if v['open'] < v['close'] else "Vermelha" if v['open'] > v['close'] else "Doji" for v in velas]
 
     direcao = None
     if estrategia in ['MHI','MHI M5']:
         if cores.count('Verde') > cores.count('Vermelha') and 'Doji' not in cores:
             direcao = "put"
-        if cores.count('Verde') < cores.count('Vermelha') and 'Doji' not in cores:
+        elif cores.count('Verde') < cores.count('Vermelha') and 'Doji' not in cores:
             direcao = "call"
     elif estrategia == 'Torres Gêmeas':
         if cores[0] == 'Verde':
             direcao = "call"
-        if cores[0] == 'Vermelha':
+        elif cores[0] == 'Vermelha':
             direcao = "put"
     return direcao
 
@@ -51,7 +51,7 @@ col1, col2, col3, col4 = st.columns(4)
 
 saldo = 0
 moeda = ""
-if 'api' in st.session_state:
+if st.session_state.conectado and st.session_state.api:
     try:
         saldo = st.session_state.api.get_balance()
         moeda = st.session_state.api.get_currency()
@@ -71,49 +71,62 @@ with col4:
 
 st.markdown("---")
 
-# ---------------- SIDEBAR (LOGIN INTACTO) ----------------
+# ---------------- SIDEBAR: LOGIN ----------------
 with st.sidebar:
     st.header("Conexão IQ Option")
     conta_tipo = st.selectbox("Tipo de Conta", ["PRACTICE","REAL"])
 
-    if 'api' not in st.session_state:
-        email = st.text_input("Email")
-        senha = st.text_input("Senha", type="password")
-        if st.button("Conectar IQ Option", use_container_width=True):
+    email = st.text_input("Email", key="email_input")
+    senha = st.text_input("Senha", type="password", key="senha_input")
+
+    if st.button("Conectar IQ Option", use_container_width=True):
+        login_hash = f"{email}-{senha}-{conta_tipo}"
+        if st.session_state.login_hash != login_hash:
+            # Se for um login diferente, limpar sessão anterior
+            st.session_state.api = None
+            st.session_state.conectado = False
+            st.session_state.rodando = False
+            st.session_state.login_hash = login_hash
+        
+        try:
             api = IQ_Option(email, senha)
             check, _ = api.connect()
             if check:
                 api.change_balance(conta_tipo)
                 st.session_state.api = api
+                st.session_state.conectado = True
+                st.session_state.login_hash = login_hash
                 st.success(f"Conectado na conta {conta_tipo}")
                 st.rerun()
             else:
-                st.error("Falha na conexão. Verifique suas credenciais.")
-    else:
+                st.error("Falha ao conectar. Verifique suas credenciais.")
+        except Exception as e:
+            st.error(f"Erro: {e}")
+
+    if st.session_state.conectado and st.session_state.api:
         st.success("✅ Conectado com sucesso")
         if st.button("Desconectar", use_container_width=True):
-            del st.session_state['api']
+            st.session_state.api = None
+            st.session_state.conectado = False
             st.session_state.rodando = False
+            st.session_state.login_hash = None
             st.rerun()
 
-# ---------------- ABAS PRINCIPAIS ----------------
-aba1, aba2, aba3 = st.tabs(["🎮 Controle", "⚙️ Configurações", "📊 Histórico"])
+# ---------------- ABAS ----------------
+aba1, aba2, aba3 = st.tabs(["🎮 Controle", "⚙️ Configurações", "📊 Histórico de Operações"])
 
-# ---------------- ABA 2: CONFIGURAÇÕES ----------------
+# ---------------- CONFIGURAÇÕES ----------------
 with aba2:
     st.subheader("Parâmetros do Robô")
-    
     cfg_col1, cfg_col2, cfg_col3 = st.columns(3)
     
     with cfg_col1:
         st.selectbox("Estratégia", ["MHI", "MHI M5", "Torres Gêmeas"], key="estrategia_usuario")
         st.selectbox("Tipo de Operação", ["digital", "binaria"], key="tipo")
         st.number_input("Valor de Entrada", value=2.5, step=0.5, key="valor_entrada")
-        
     with cfg_col2:
         st.number_input("Stop Win", value=4.0, step=1.0, key="stop_win")
         st.number_input("Stop Loss", value=3.0, step=1.0, key="stop_loss")
-        
     with cfg_col3:
         st.checkbox("Usar Martingale", key="usar_mg")
         st.number_input("Níveis Martingale", value=1, min_value=1, key="niveis_mg")
@@ -121,12 +134,12 @@ with aba2:
         st.checkbox("Usar Soros", key="usar_soros")
         st.number_input("Níveis Soros", value=2, min_value=1, key="niveis_soros")
 
-# ---------------- ABA 1: CONTROLE ----------------
+# ---------------- CONTROLE ----------------
 with aba1:
     st.subheader("Painel de Controle")
     if not st.session_state.rodando:
         if st.button("▶ INICIAR ROBÔ", type="primary", use_container_width=True):
-            if 'api' in st.session_state:
+            if st.session_state.conectado:
                 st.session_state.rodando = True
                 st.rerun()
             else:
@@ -136,7 +149,7 @@ with aba1:
             st.session_state.rodando = False
             st.rerun()
 
-# ---------------- ABA 3: HISTÓRICO ----------------
+# ---------------- HISTÓRICO ----------------
 with aba3:
     if len(st.session_state.historico) > 0:
         df = pd.DataFrame(st.session_state.historico)
@@ -144,8 +157,8 @@ with aba3:
     else:
         st.info("Nenhum trade executado ainda nesta sessão.")
 
-# ---------------- LOOP DO BOT (COM MARTINGALE INSTANTÂNEO) ----------------
-if 'api' in st.session_state and st.session_state.rodando:
+# ---------------- LOOP DO BOT ----------------
+if st.session_state.conectado and st.session_state.rodando:
     st.markdown("---")
     st.subheader("🔄 Processando ciclo de operação...")
     
@@ -158,6 +171,7 @@ if 'api' in st.session_state and st.session_state.rodando:
     niveis_mg = st.session_state.niveis_mg
     fator_mg = st.session_state.fator_mg
 
+    # Catalogação de ativos
     lista, linha_idx = catag(
         st.session_state.api,
         niveis_mg=niveis_mg,
@@ -167,84 +181,60 @@ if 'api' in st.session_state and st.session_state.rodando:
     if lista:
         melhor = lista[0]
         ativo = melhor[1]
-
-        info_col1, info_col2 = st.columns(2)
-        info_col1.info(f"**Ativo Analisado:** {ativo}")
-        info_col2.info(f"**Estratégia:** {estrategia}")
-
         direcao = analisar_entrada(st.session_state.api, ativo, estrategia)
-
+        
         if direcao:
-            st.success(f"Sinal Encontrado! Operando {direcao.upper()} em {ativo}")
+            st.success(f"Sinal encontrado! Operando {direcao.upper()} em {ativo}")
             
-            # --- LÓGICA DE MARTINGALE ---
             gale_atual = 0
-            max_tentativas = niveis_mg if usar_mg else 0
+            max_gale = niveis_mg if usar_mg else 0
             
-            # Este while roda instantaneamente na corretora se houver loss
-            while gale_atual <= max_tentativas:
-                # Calcula o valor da entrada multiplicando pelo fator
+            while gale_atual <= max_gale:
                 valor_operacao = valor_entrada * (fator_mg ** gale_atual)
                 lucro_trade = 0
                 
-                # Executa a compra
                 if tipo == "digital":
                     check, id = st.session_state.api.buy_digital_spot_v2(ativo, valor_operacao, direcao, 1)
                 else:
                     check, id = st.session_state.api.buy(valor_operacao, ativo, direcao, 1)
-
-                if check:
-                    msg_etapa = f"Aguardando resultado (Gale {gale_atual})..." if gale_atual > 0 else "Aguardando resultado da entrada..."
-                    with st.spinner(msg_etapa):
-                        while True:
-                            time.sleep(1) # Aguarda fechamento da vela
-                            if tipo == "digital":
-                                status, resultado = st.session_state.api.check_win_digital_v2(id)
-                            else:
-                                status, resultado = st.session_state.api.check_win_v4(id)
-                                
-                            if status:
-                                st.session_state.lucro_sessao += resultado
-                                tipo_entrada = "Entrada Normal" if gale_atual == 0 else f"Gale {gale_atual}"
-                                st.session_state.historico.append({
-                                    "Ativo": ativo,
-                                    "Direção": direcao.upper(),
-                                    "Etapa": tipo_entrada,
-                                    "Resultado": round(resultado, 2),
-                                    "Hora": datetime.now().strftime("%H:%M:%S")
-                                })
-                                lucro_trade = resultado
-                                break
                 
-                # Verifica o resultado para saber se faz o Gale ou para
+                if check:
+                    while True:
+                        time.sleep(1)
+                        if tipo == "digital":
+                            status, resultado = st.session_state.api.check_win_digital_v2(id)
+                        else:
+                            status, resultado = st.session_state.api.check_win_v4(id)
+                        if status:
+                            st.session_state.lucro_sessao += resultado
+                            st.session_state.historico.append({
+                                "Ativo": ativo,
+                                "Direção": direcao.upper(),
+                                "Etapa": f"Gale {gale_atual}" if gale_atual > 0 else "Entrada Normal",
+                                "Resultado": round(resultado,2),
+                                "Hora": datetime.now().strftime("%H:%M:%S")
+                            })
+                            lucro_trade = resultado
+                            break
+                
                 if lucro_trade > 0:
-                    break # WIN! Quebra o loop do Martingale e vai procurar outro ativo
+                    break
                 else:
-                    # Foi Loss (ou empate, que na maioria das vezes em digital é loss).
-                    if gale_atual < max_tentativas:
-                        # O loop vai rodar novamente em milissegundos
-                        pass
-                    
-                gale_atual += 1
-            # --- FIM DA LÓGICA DE MARTINGALE ---
+                    gale_atual += 1
 
         else:
-            st.warning(f"Aguardando sinal para o ativo {ativo}...")
+            st.info(f"Aguardando sinal para o ativo {ativo}...")
     else:
-        st.error("Nenhum ativo catalogado.")
+        st.warning("Nenhum ativo catalogado.")
 
-    # Verifica os Stops
+    # Stops
     if st.session_state.lucro_sessao >= stop_win:
-        st.success("🏆 STOP WIN ATINGIDO! Parabéns!")
+        st.success("🏆 STOP WIN ATINGIDO! Encerrando o robô.")
         st.session_state.rodando = False
-        st.rerun()
-        
     elif st.session_state.lucro_sessao <= -stop_loss:
-        st.error("🛑 STOP LOSS ATINGIDO! Encerrando por hoje.")
+        st.error("🛑 STOP LOSS ATINGIDO! Encerrando o robô.")
         st.session_state.rodando = False
-        st.rerun()
 
     if st.session_state.rodando:
-        time.sleep(10)
+        time.sleep(5)
         st.rerun()
-                     
