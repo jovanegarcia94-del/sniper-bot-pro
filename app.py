@@ -166,7 +166,7 @@ with tabs[0]:
             api.change_balance(conta)
             while st.session_state.running:
                 try:
-                    # 1. Atualização dos Cards de Interface
+                    # 1. Atualização Constante dos Cards
                     saldo = api.get_balance()
                     banca_card.markdown(f'<div class="card"><div class="label">💰 BANCA</div><div class="value">${saldo:,.2f}</div></div>', unsafe_allow_html=True)
                     lucro_card.markdown(f'<div class="card"><div class="label">📈 LUCRO</div><div class="value {"win" if st.session_state.lucro_total >= 0 else "loss"}">${st.session_state.lucro_total:.2f}</div></div>', unsafe_allow_html=True)
