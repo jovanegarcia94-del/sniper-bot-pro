@@ -13,17 +13,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ---------------- ESTILO CUSTOMIZADO (CSS) ----------------
+# ---------------- ESTILO CUSTOMIZADO (CSS ADAPTÁVEL) ----------------
+# Usando rgba e variáveis nativas para funcionar perfeitamente no Modo Claro e Escuro
 st.markdown("""
     <style>
-    .stMetric {
-        background-color: #f0f2f6;
+    [data-testid="stMetric"] {
+        background-color: rgba(128, 128, 128, 0.1);
         padding: 15px;
         border-radius: 10px;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
-    }
-    [data-testid="stSidebar"] {
-        background-color: #1e1e2f;
+        border: 1px solid rgba(128, 128, 128, 0.2);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -42,7 +40,7 @@ if 'conectado' not in st.session_state:
 if 'api' not in st.session_state:
     st.session_state.api = None
 
-# ---------------- FUNÇÃO DE ANÁLISE (INTACTA) ----------------
+# ---------------- FUNÇÃO DE ANÁLISE ----------------
 def analisar_entrada(api, ativo, estrategia):
     timeframe = 300 if estrategia == 'MHI M5' else 60
     qnt_velas = 4 if estrategia == 'Torres Gêmeas' else 3
@@ -172,14 +170,13 @@ with aba2:
 with aba3:
     if len(st.session_state.historico) > 0:
         df = pd.DataFrame(st.session_state.historico)
-        # Reordenando para mostrar os mais recentes primeiro
         st.dataframe(df.iloc[::-1], use_container_width=True)
     else:
         st.info("Nenhum trade executado nesta sessão ainda.")
 
 # ---------------- LOOP BOT POR CICLO (ÁREA DE EXECUÇÃO) ----------------
 st.markdown("---")
-log_container = st.empty() # Container para mensagens do bot sem poluir a tela inteira
+log_container = st.empty()
 
 if st.session_state.api and st.session_state.rodando:
     with log_container.container():
@@ -214,17 +211,22 @@ if st.session_state.api and st.session_state.rodando:
                         check, id = st.session_state.api.buy(valor_entrada, ativo, direcao, 1)
                         
                     if check:
-                        # O spinner abaixo resolve o visual de "congelamento" enquanto espera a ordem fechar
                         with st.status("Aguardando finalização da ordem...", expanded=True) as status_ordem:
-                            st.write("Ordem aberta. Aguardando expiração do tempo da vela...")
+                            st.write("Ordem aberta. Aguardando resultado...")
+                            
+                            valor_atual = valor_entrada
+                            mg_atual = 0
+                            
                             while True:
-                                time.sleep(1)
+                                time.sleep(0.5) # Tempo reduzido para resposta imediata
+                                
                                 if tipo == "digital":
                                     status_op, resultado = st.session_state.api.check_win_digital_v2(id)
                                 else:
                                     status_op, resultado = st.session_state.api.check_win_v4(id)
                                     
                                 if status_op:
+                                    # Salva o histórico da entrada que acabou de fechar
                                     st.session_state.lucro_sessao += resultado
                                     st.session_state.historico.append({
                                         "ativo": ativo,
@@ -232,13 +234,33 @@ if st.session_state.api and st.session_state.rodando:
                                         "resultado": round(resultado, 2),
                                         "hora": datetime.now().strftime("%H:%M:%S")
                                     })
-                                    status_ordem.update(label=f"Ordem Finalizada! Resultado: {simbolo} {round(resultado, 2)}", state="complete")
                                     
-                                    if resultado > 0:
-                                        st.toast("WIN! Operação vitoriosa!", icon="🤑")
+                                    # LÓGICA DE MARTINGALE IMEDIATO SEM PERDER 1 SEGUNDO
+                                    if resultado < 0 and usar_mg and mg_atual < niveis_mg:
+                                        mg_atual += 1
+                                        valor_atual = valor_atual * fator_mg
+                                        st.toast(f"LOSS! Disparando MG {mg_atual} imediatamente...", icon="⚡")
+                                        st.write(f"Abrindo Martingale {mg_atual} com valor {valor_atual}...")
+                                        
+                                        # Executa a compra instantaneamente na mesma direção
+                                        if tipo == "digital":
+                                            check_mg, id = st.session_state.api.buy_digital_spot_v2(ativo, valor_atual, direcao, 1)
+                                        else:
+                                            check_mg, id = st.session_state.api.buy(valor_atual, ativo, direcao, 1)
+                                            
+                                        if not check_mg:
+                                            st.error(f"Falha na API ao tentar abrir o MG {mg_atual}")
+                                            break
+                                            
+                                        # O loop while continua girando, agora monitorando o novo 'id' do MG
                                     else:
-                                        st.toast("LOSS! Operação perdida.", icon="📉")
-                                    break
+                                        # Quando a operação dá WIN ou os MGs acabam, finaliza tudo
+                                        status_ordem.update(label=f"Ciclo Finalizado! Resultado: {simbolo} {round(resultado, 2)}", state="complete")
+                                        if resultado > 0:
+                                            st.toast("WIN! Operação vitoriosa!", icon="🤑")
+                                        else:
+                                            st.toast("LOSS! Ciclo perdido.", icon="📉")
+                                        break
                 else:
                     st.info("Análise concluída: Sem sinal de entrada no momento.")
 
@@ -253,8 +275,8 @@ if st.session_state.api and st.session_state.rodando:
         except Exception as e:
             st.error(f"Erro no ciclo: {e}")
             
-    # Auto-recarregamento: Faz a página dar um "refresh" a cada poucos segundos se o bot estiver ativo
-    # Isso evita que o Streamlit morra e continua o loop de forma natural na web
+    # Auto-recarregamento a cada 3 segundos se o bot estiver ativo
     if st.session_state.rodando:
-        time.sleep(3) # Tempo de pausa entre as varreduras para não sobrecarregar a API
+        time.sleep(3) 
         st.rerun()
+                                                   
