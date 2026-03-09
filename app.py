@@ -49,7 +49,6 @@ st.markdown("---")
 
 col1, col2, col3, col4 = st.columns(4)
 
-# pegar saldo se estiver conectado
 saldo = 0
 moeda = ""
 if 'api' in st.session_state:
@@ -101,7 +100,6 @@ with st.sidebar:
 aba1, aba2, aba3 = st.tabs(["🎮 Controle", "⚙️ Configurações", "📊 Histórico"])
 
 # ---------------- ABA 2: CONFIGURAÇÕES ----------------
-# Movido para cima do controle para garantir que as variáveis existam no session_state
 with aba2:
     st.subheader("Parâmetros do Robô")
     
@@ -142,18 +140,15 @@ with aba1:
 with aba3:
     if len(st.session_state.historico) > 0:
         df = pd.DataFrame(st.session_state.historico)
-        # Formatando as cores dependendo do resultado
         st.dataframe(df, use_container_width=True)
     else:
         st.info("Nenhum trade executado ainda nesta sessão.")
 
-# ---------------- LOOP DO BOT (SEM TRAVAMENTO) ----------------
-# Executa apenas UM ciclo por vez e recarrega a página se estiver rodando
+# ---------------- LOOP DO BOT (COM MARTINGALE INSTANTÂNEO) ----------------
 if 'api' in st.session_state and st.session_state.rodando:
     st.markdown("---")
     st.subheader("🔄 Processando ciclo de operação...")
     
-    # Busca configurações diretamente do session_state
     estrategia = st.session_state.estrategia_usuario
     tipo = st.session_state.tipo
     valor_entrada = st.session_state.valor_entrada
@@ -161,8 +156,8 @@ if 'api' in st.session_state and st.session_state.rodando:
     stop_loss = st.session_state.stop_loss
     usar_mg = st.session_state.usar_mg
     niveis_mg = st.session_state.niveis_mg
+    fator_mg = st.session_state.fator_mg
 
-    # Catalogação
     lista, linha_idx = catag(
         st.session_state.api,
         niveis_mg=niveis_mg,
@@ -182,31 +177,57 @@ if 'api' in st.session_state and st.session_state.rodando:
         if direcao:
             st.success(f"Sinal Encontrado! Operando {direcao.upper()} em {ativo}")
             
-            # Entrada
-            if tipo == "digital":
-                check, id = st.session_state.api.buy_digital_spot_v2(ativo, valor_entrada, direcao, 1)
-            else:
-                check, id = st.session_state.api.buy(valor_entrada, ativo, direcao, 1)
+            # --- LÓGICA DE MARTINGALE ---
+            gale_atual = 0
+            max_tentativas = niveis_mg if usar_mg else 0
+            
+            # Este while roda instantaneamente na corretora se houver loss
+            while gale_atual <= max_tentativas:
+                # Calcula o valor da entrada multiplicando pelo fator
+                valor_operacao = valor_entrada * (fator_mg ** gale_atual)
+                lucro_trade = 0
+                
+                # Executa a compra
+                if tipo == "digital":
+                    check, id = st.session_state.api.buy_digital_spot_v2(ativo, valor_operacao, direcao, 1)
+                else:
+                    check, id = st.session_state.api.buy(valor_operacao, ativo, direcao, 1)
 
-            # Checagem de vitória (Este while interno é curto e necessário para a operação)
-            if check:
-                with st.spinner('Aguardando resultado da operação...'):
-                    while True:
-                        time.sleep(1)
-                        if tipo == "digital":
-                            status, resultado = st.session_state.api.check_win_digital_v2(id)
-                        else:
-                            status, resultado = st.session_state.api.check_win_v4(id)
-                            
-                        if status:
-                            st.session_state.lucro_sessao += resultado
-                            st.session_state.historico.append({
-                                "Ativo": ativo,
-                                "Direção": direcao.upper(),
-                                "Resultado": round(resultado, 2),
-                                "Hora": datetime.now().strftime("%H:%M:%S")
-                            })
-                            break
+                if check:
+                    msg_etapa = f"Aguardando resultado (Gale {gale_atual})..." if gale_atual > 0 else "Aguardando resultado da entrada..."
+                    with st.spinner(msg_etapa):
+                        while True:
+                            time.sleep(1) # Aguarda fechamento da vela
+                            if tipo == "digital":
+                                status, resultado = st.session_state.api.check_win_digital_v2(id)
+                            else:
+                                status, resultado = st.session_state.api.check_win_v4(id)
+                                
+                            if status:
+                                st.session_state.lucro_sessao += resultado
+                                tipo_entrada = "Entrada Normal" if gale_atual == 0 else f"Gale {gale_atual}"
+                                st.session_state.historico.append({
+                                    "Ativo": ativo,
+                                    "Direção": direcao.upper(),
+                                    "Etapa": tipo_entrada,
+                                    "Resultado": round(resultado, 2),
+                                    "Hora": datetime.now().strftime("%H:%M:%S")
+                                })
+                                lucro_trade = resultado
+                                break
+                
+                # Verifica o resultado para saber se faz o Gale ou para
+                if lucro_trade > 0:
+                    break # WIN! Quebra o loop do Martingale e vai procurar outro ativo
+                else:
+                    # Foi Loss (ou empate, que na maioria das vezes em digital é loss).
+                    if gale_atual < max_tentativas:
+                        # O loop vai rodar novamente em milissegundos
+                        pass
+                    
+                gale_atual += 1
+            # --- FIM DA LÓGICA DE MARTINGALE ---
+
         else:
             st.warning(f"Aguardando sinal para o ativo {ativo}...")
     else:
@@ -223,8 +244,7 @@ if 'api' in st.session_state and st.session_state.rodando:
         st.session_state.rodando = False
         st.rerun()
 
-    # Se ainda estiver rodando, espera os 10 segundos e reinicia o ciclo
     if st.session_state.rodando:
         time.sleep(10)
         st.rerun()
-    
+                     
