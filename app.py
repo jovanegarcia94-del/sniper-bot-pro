@@ -4,8 +4,8 @@ from iqoptionapi.stable_api import IQ_Option
 from catalogador import catag
 from datetime import datetime
 
-# ---------------- CONFIGURAÇÃO DA PÁGINA ----------------
-st.set_page_config(page_title="Sniper Bot Streamlit", layout="wide")
+# ---------------- CONFIGURAÇÃO ----------------
+st.set_page_config(page_title="Sniper Bot Dashboard", layout="wide")
 
 # ---------------- ESTADOS ----------------
 estado_inicial = [
@@ -50,8 +50,9 @@ def analisar_entrada(api, ativo, estrategia):
             direcao = "put"
     return direcao
 
-def atualizar_logs():
-    logs = []
+def atualizar_dashboard():
+    # Cria colunas para informações principais
+    col1, col2, col3 = st.columns(3)
     if st.session_state.api:
         try:
             saldo = st.session_state.api.get_balance()
@@ -64,17 +65,18 @@ def atualizar_logs():
         saldo = 0
         simbolo = "R$"
 
-    logs.append(f"Saldo Conta: {simbolo} {round(saldo,2)}")
-    logs.append(f"Lucro Sessão: {simbolo} {round(st.session_state.lucro_sessao,2)}")
-    logs.append(f"Status: {'Rodando' if st.session_state.rodando else 'Parado'}")
-    logs.append("Últimos Trades:")
+    col1.metric("Saldo Conta", f"{simbolo} {round(saldo,2)}")
+    col2.metric("Lucro Sessão", f"{simbolo} {round(st.session_state.lucro_sessao,2)}")
+    col3.metric("Status Bot", "Rodando" if st.session_state.rodando else "Parado")
+
+    # Histórico de trades
+    st.subheader("Últimos Trades")
     if st.session_state.historico:
-        for trade in st.session_state.historico[-5:]:
-            logs.append(f"{trade['hora']} | {trade['ativo']} | {trade['direcao']} | {trade['resultado']}")
+        for trade in st.session_state.historico[-10:]:
+            cor = "green" if trade['resultado'] >=0 else "red"
+            st.markdown(f"<span style='color:{cor}'>{trade['hora']} | {trade['ativo']} | {trade['direcao']} | {trade['resultado']:.2f}</span>", unsafe_allow_html=True)
     else:
-        logs.append("Nenhum trade executado ainda")
-    
-    st.session_state.placeholder_logs.write("\n".join(logs))
+        st.write("Nenhum trade realizado ainda")
 
 # ---------------- SIDEBAR ----------------
 st.sidebar.header("Conexão IQ Option")
@@ -115,11 +117,9 @@ fator_mg = st.sidebar.number_input("Fator Martingale", value=2.0)
 usar_soros = st.sidebar.checkbox("Usar Soros")
 niveis_soros = st.sidebar.number_input("Níveis Soros", value=2)
 
-# ---------------- LOGS ----------------
-st.header("Logs do Bot")
-if 'placeholder_logs' not in st.session_state:
-    st.session_state.placeholder_logs = st.empty()
-st.session_state.placeholder_logs.empty()
+# ---------------- PLACEHOLDER ----------------
+if 'placeholder_dashboard' not in st.session_state:
+    st.session_state.placeholder_dashboard = st.empty()
 
 # ---------------- LOOP DO BOT ----------------
 if st.session_state.api and st.session_state.rodando:
@@ -134,14 +134,9 @@ if st.session_state.api and st.session_state.rodando:
             ativo = melhor[1]
             estrategia = st.session_state.estrategia_usuario
 
-            st.write(f"Ativo escolhido: {ativo} | Estratégia: {estrategia}")
-
             direcao = analisar_entrada(st.session_state.api, ativo, estrategia)
             if direcao:
-                # Martingale
                 valor_operacao = st.session_state.mg_valor if st.session_state.mg_ativo else valor_entrada
-
-                st.write(f"Operando {direcao} | Valor: {valor_operacao}")
                 
                 if tipo == "digital":
                     check, id = st.session_state.api.buy_digital_spot_v2(
@@ -175,7 +170,8 @@ if st.session_state.api and st.session_state.rodando:
                             else:
                                 st.session_state.mg_ativo = False
                                 st.session_state.mg_valor = 0
-                            atualizar_logs()
+                            st.session_state.placeholder_dashboard.empty()
+                            atualizar_dashboard()
                             break
             else:
                 st.warning("Sem sinal")
@@ -184,10 +180,13 @@ if st.session_state.api and st.session_state.rodando:
             if st.session_state.lucro_sessao >= stop_win or st.session_state.lucro_sessao <= -stop_loss:
                 st.error("Stop atingido")
                 st.session_state.rodando = False
-                atualizar_logs()
+                st.session_state.placeholder_dashboard.empty()
+                atualizar_dashboard()
         else:
             st.warning("Nenhum ativo disponível")
-            atualizar_logs()
+            st.session_state.placeholder_dashboard.empty()
+            atualizar_dashboard()
     except Exception as e:
         st.error(f"Erro no ciclo: {e}")
-        atualizar_logs()
+        st.session_state.placeholder_dashboard.empty()
+        atualizar_dashboard()
