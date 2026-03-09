@@ -3,7 +3,7 @@ import time
 from datetime import datetime
 from iqoptionapi.stable_api import IQ_Option
 
-from catag import catag
+from catalogador import catag
 
 
 # ------------------------------
