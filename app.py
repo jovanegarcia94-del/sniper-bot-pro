@@ -1,203 +1,270 @@
 import streamlit as st
-import pandas as pd
 import time
-from iqoptionapi.stable_api import IQ_Option
-from catalogador import catag
 from datetime import datetime
+from iqoptionapi.stable_api import IQ_Option
 
-# ---------------- CONFIGURAÇÃO ----------------
-st.set_page_config(page_title="Robô Trader Logs + Martingale", layout="wide")
+from catag import catag
 
-# ---------------- ESTADOS ----------------
-for key, default in [
-    ('rodando', False),
-    ('lucro_sessao', 0.0),
-    ('historico', []),
-    ('estrategia_usuario', 'MHI'),
-    ('conectado', False),
-    ('api', None)
-]:
-    if key not in st.session_state:
-        st.session_state[key] = default
 
-# ---------------- FUNÇÃO DE ANÁLISE ----------------
-def analisar_entrada(api, ativo, estrategia):
-    timeframe = 300 if estrategia == 'MHI M5' else 60
-    qnt_velas = 4 if estrategia == 'Torres Gêmeas' else 3
-    velas = api.get_candles(ativo, timeframe, qnt_velas, time.time())
-    cores = []
-    for v in velas:
-        if v['open'] < v['close']:
-            cores.append("Verde")
-        elif v['open'] > v['close']:
-            cores.append("Vermelha")
-        else:
-            cores.append("Doji")
-    direcao = None
-    if estrategia in ['MHI','MHI M5']:
-        if cores.count('Verde') > cores.count('Vermelha') and 'Doji' not in cores:
-            direcao = "put"
-        if cores.count('Verde') < cores.count('Vermelha') and 'Doji' not in cores:
-            direcao = "call"
-    elif estrategia == 'Torres Gêmeas':
-        if cores[0] == 'Verde':
-            direcao = "call"
-        if cores[0] == 'Vermelha':
-            direcao = "put"
-    return direcao
+# ------------------------------
+# CONFIG STREAMLIT
+# ------------------------------
 
-# ---------------- SIDEBAR ----------------
+st.set_page_config(
+    page_title="Sniper Bot Pro",
+    layout="wide"
+)
+
+st.title("🤖 SNIPER BOT PRO")
+
+
+# ------------------------------
+# SESSION STATE
+# ------------------------------
+
+if "api" not in st.session_state:
+    st.session_state.api = None
+
+if "conectado" not in st.session_state:
+    st.session_state.conectado = False
+
+if "rodando" not in st.session_state:
+    st.session_state.rodando = False
+
+if "logs" not in st.session_state:
+    st.session_state.logs = []
+
+if "lucro" not in st.session_state:
+    st.session_state.lucro = 0
+
+
+# ------------------------------
+# FUNÇÃO LOG
+# ------------------------------
+
+def log(msg):
+
+    hora = datetime.now().strftime("%H:%M:%S")
+    linha = f"[{hora}] {msg}"
+
+    st.session_state.logs.append(linha)
+
+    if len(st.session_state.logs) > 200:
+        st.session_state.logs.pop(0)
+
+
+# ------------------------------
+# SIDEBAR
+# ------------------------------
+
 with st.sidebar:
-    st.header("Conexão")
-    conta_tipo = st.selectbox("Tipo de Conta", ["PRACTICE","REAL"])
+
+    st.header("🔐 Conexão")
+
     email = st.text_input("Email")
     senha = st.text_input("Senha", type="password")
 
-    if st.button("Conectar IQ Option"):
-        if email and senha:
-            api = IQ_Option(email, senha)
-            check,_ = api.connect()
-            if check:
-                api.change_balance(conta_tipo)
-                st.session_state.api = api
-                st.session_state.conectado = True
-                st.success(f"Conectado na conta {conta_tipo}")
-            else:
-                st.error("Falha ao conectar. Verifique email/senha")
-        else:
-            st.warning("Informe email e senha")
-
-    if st.session_state.conectado and st.session_state.api:
-        st.success("✅ Conectado")
-        if st.button("Parar Bot"):
-            st.session_state.rodando = False
-
-# ---------------- ABAS ----------------
-aba1, aba2, aba3 = st.tabs(["Controle","Configurações","Logs"])
-
-# ---------------- CONTROLE ----------------
-with aba1:
-    if not st.session_state.rodando:
-        if st.button("▶ Iniciar Robô"):
-            st.session_state.rodando = True
-    else:
-        if st.button("⛔ Parar Robô"):
-            st.session_state.rodando = False
-
-# ---------------- CONFIGURAÇÕES ----------------
-with aba2:
-    st.subheader("Parâmetros do Bot")
-    st.session_state.estrategia_usuario = st.selectbox(
-        "Estratégia",
-        ["MHI","MHI M5","Torres Gêmeas"]
+    conta = st.selectbox(
+        "Tipo de Conta",
+        ["PRACTICE", "REAL"]
     )
-    valor_entrada = st.number_input("Valor Entrada", value=2.5)
-    stop_win = st.number_input("Stop Win", value=4.0)
-    stop_loss = st.number_input("Stop Loss", value=3.0)
-    tipo = st.selectbox("Tipo Operação", ["digital","binaria"])
-    usar_mg = st.checkbox("Usar Martingale")
-    niveis_mg = st.number_input("Níveis Martingale", value=1)
-    fator_mg = st.number_input("Fator Martingale", value=2.0)
-    usar_soros = st.checkbox("Usar Soros")
-    niveis_soros = st.number_input("Níveis Soros", value=2)
 
-# ---------------- LOGS ----------------
-placeholder_logs = aba3.empty()
+    conectar = st.button("🔌 Conectar")
 
-def atualizar_logs():
-    logs = []
-    if st.session_state.api:
-        try:
-            saldo = st.session_state.api.get_balance()
-            moeda = st.session_state.api.get_currency()
-            simbolo = "$" if moeda=="USD" else "R$"
-        except:
-            saldo = 0
-            simbolo = "R$"
-    else:
-        saldo = 0
-        simbolo = "R$"
+    st.divider()
 
-    logs.append(f"Saldo Conta: {simbolo} {round(saldo,2)}")
-    logs.append(f"Lucro Sessão: {simbolo} {round(st.session_state.lucro_sessao,2)}")
-    logs.append(f"Status: {'Rodando' if st.session_state.rodando else 'Parado'}")
-    logs.append("Últimos Trades:")
-    if st.session_state.historico:
-        for trade in st.session_state.historico[-5:]:
-            logs.append(f"{trade['hora']} | {trade['ativo']} | {trade['direcao']} | {trade['resultado']}")
-    else:
-        logs.append("Nenhum trade executado ainda")
-    
-    placeholder_logs.write("\n".join(logs))
+    st.header("⚙️ Configuração")
 
-# ---------------- LOOP DO BOT COM MARTINGALE ----------------
-if st.session_state.api and st.session_state.rodando:
+    entrada = st.number_input("Valor entrada", value=2.0)
+
+    fator_mg = st.number_input("Fator MG", value=2.2)
+
+    usar_mg = st.checkbox("Usar Martingale", value=True)
+
+    usar_soros = st.checkbox("Usar Soros", value=False)
+
+    payout_min = st.slider("Payout mínimo", 50, 100, 80)
+
+
+# ------------------------------
+# CONEXÃO
+# ------------------------------
+
+if conectar:
+
     try:
-        lista, linha_idx = catag(
-            st.session_state.api,
-            niveis_mg=niveis_mg,
-            usar_mg=usar_mg
-        )
-        if lista:
-            melhor = lista[0]
-            ativo = melhor[1]
-            estrategia = st.session_state.estrategia_usuario
 
-            atualizar_logs()
-            st.write(f"Ativo escolhido: {ativo} | Estratégia: {estrategia}")
+        api = IQ_Option(email, senha)
 
-            direcao = analisar_entrada(st.session_state.api, ativo, estrategia)
-            if direcao:
-                check_operacao = True
-                valor_atual = valor_entrada
-                nivel_mg = 0
+        check, reason = api.connect()
 
-                while check_operacao and st.session_state.rodando:
-                    if tipo == "digital":
-                        check, id = st.session_state.api.buy_digital_spot_v2(
-                            ativo, valor_atual, direcao, 1
-                        )
-                    else:
-                        check, id = st.session_state.api.buy(
-                            valor_atual, ativo, direcao, 1
-                        )
-                    if check:
-                        st.info(f"Operando {direcao} | Valor: {valor_atual} | Nível MG: {nivel_mg}")
-                        while True:
-                            time.sleep(1)
-                            if tipo == "digital":
-                                status, resultado = st.session_state.api.check_win_digital_v2(id)
-                            else:
-                                status, resultado = st.session_state.api.check_win_v4(id)
-                            if status:
-                                st.session_state.lucro_sessao += resultado
-                                st.session_state.historico.append({
-                                    "ativo": ativo,
-                                    "direcao": direcao,
-                                    "resultado": resultado,
-                                    "hora": datetime.now().strftime("%H:%M:%S")
-                                })
-                                atualizar_logs()
-                                # Se deu loss e martingale ativado
-                                if resultado < 0 and usar_mg and nivel_mg < niveis_mg:
-                                    nivel_mg += 1
-                                    valor_atual *= fator_mg
-                                    st.warning(f"Loss detectado, abrindo próximo MG | Nível: {nivel_mg} | Valor: {valor_atual}")
-                                    break  # reinicia loop para nova operação
-                                else:
-                                    check_operacao = False
-                                    break
-            else:
-                st.warning("Sem sinal")
-            
-            # Stop loss / stop win
-            if st.session_state.lucro_sessao >= stop_win or st.session_state.lucro_sessao <= -stop_loss:
-                st.error("Stop atingido")
-                st.session_state.rodando = False
-                atualizar_logs()
+        if check:
+
+            api.change_balance(conta)
+
+            st.session_state.api = api
+            st.session_state.conectado = True
+
+            log("Conectado com sucesso")
+
         else:
-            st.warning("Nenhum ativo disponível")
-            atualizar_logs()
+
+            st.error(reason)
+
     except Exception as e:
-        st.error(f"Erro no ciclo: {e}")
-        atualizar_logs()
+
+        st.error(str(e))
+
+
+# ------------------------------
+# BOTÕES
+# ------------------------------
+
+col1, col2 = st.columns(2)
+
+with col1:
+
+    if st.button("▶️ Iniciar Bot"):
+
+        if st.session_state.conectado:
+
+            st.session_state.rodando = True
+
+            log("BOT INICIADO")
+
+with col2:
+
+    if st.button("⛔ Parar Bot"):
+
+        st.session_state.rodando = False
+
+        log("BOT PARADO")
+
+
+# ------------------------------
+# LOG AREA
+# ------------------------------
+
+st.subheader("📜 Logs do Robô")
+
+log_box = st.empty()
+
+
+# ------------------------------
+# MOTOR DO BOT
+# ------------------------------
+
+def executar_bot():
+
+    api = st.session_state.api
+
+    try:
+
+        lista, linha_idx = catag()
+
+    except Exception as e:
+
+        log(f"Erro na catalogação: {e}")
+        return
+
+    if not lista:
+
+        log("Nenhum ativo encontrado")
+        return
+
+    ativo = lista[0]["ativo"]
+    direcao = lista[0]["direcao"]
+
+    log(f"Sinal encontrado {ativo} {direcao}")
+
+    valor = entrada
+
+    check, id_o = api.buy_digital_spot_v2(
+        ativo,
+        valor,
+        direcao,
+        1
+    )
+
+    if not check:
+
+        log("Erro ao abrir operação")
+        return
+
+    gale = 0
+    resultado_total = 0
+
+    while True:
+
+        check_res = False
+
+        while not check_res:
+
+            time.sleep(1)
+
+            check_res, res = api.check_win_digital_v2(id_o)
+
+        resultado_total += res
+
+        if res > 0:
+
+            log(f"WIN {res:.2f}")
+
+            if usar_soros:
+                valor = entrada + res
+            else:
+                valor = entrada
+
+            break
+
+        else:
+
+            log(f"LOSS {res:.2f}")
+
+            if usar_mg and gale < 2:
+
+                gale += 1
+
+                valor = valor * fator_mg
+
+                log(f"MARTINGALE {gale} valor {valor}")
+
+                check, id_o = api.buy_digital_spot_v2(
+                    ativo,
+                    valor,
+                    direcao,
+                    1
+                )
+
+                if not check:
+
+                    log("Erro MG")
+                    break
+
+            else:
+
+                break
+
+    st.session_state.lucro += resultado_total
+
+    log(f"Lucro sessão {st.session_state.lucro:.2f}")
+
+
+# ------------------------------
+# LOOP PRINCIPAL
+# ------------------------------
+
+if st.session_state.rodando:
+
+    executar_bot()
+
+    time.sleep(2)
+
+
+# ------------------------------
+# MOSTRAR LOGS
+# ------------------------------
+
+log_text = "\n".join(st.session_state.logs[::-1])
+
+log_box.text(log_text)
