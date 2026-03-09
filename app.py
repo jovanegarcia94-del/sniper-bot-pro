@@ -154,7 +154,7 @@ with tabs[0]:
         if st.button("🚪 SAIR DO SISTEMA"):
             st.session_state.logged_in = False; st.rerun()
 
-    # Cards e Lógica de Operações permanecem idênticos
+  # Cards e Lógica de Operações permanecem idênticos
     c1, c2, c3 = st.columns(3)
     banca_card, lucro_card, status_card = c1.empty(), c2.empty(), c3.empty()
     info_op = st.empty()
@@ -165,11 +165,88 @@ with tabs[0]:
         if check:
             api.change_balance(conta)
             while st.session_state.running:
-                # ... Restante da sua lógica de trading original ...
-                # (Mantida exatamente como você enviou para não quebrar a estratégia)
-                saldo = api.get_balance()
-                banca_card.markdown(f'<div class="card"><div class="label">💰 BANCA</div><div class="value">${saldo:,.2f}</div></div>', unsafe_allow_html=True)
-                lucro_card.markdown(f'<div class="card"><div class="label">📈 LUCRO</div><div class="value {"win" if st.session_state.lucro_total >= 0 else "loss"}">${st.session_state.lucro_total:.2f}</div></div>', unsafe_allow_html=True)
+                try:
+                    # 1. Atualização dos Cards de Interface
+                    saldo = api.get_balance()
+                    banca_card.markdown(f'<div class="card"><div class="label">💰 BANCA</div><div class="value">${saldo:,.2f}</div></div>', unsafe_allow_html=True)
+                    lucro_card.markdown(f'<div class="card"><div class="label">📈 LUCRO</div><div class="value {"win" if st.session_state.lucro_total >= 0 else "loss"}">${st.session_state.lucro_total:.2f}</div></div>', unsafe_allow_html=True)
+                    
+                    # 2. Blindagem de Conexão
+                    if not api.check_connect():
+                        status_card.markdown('<div class="card"><div class="value warning">RECONECTANDO...</div></div>', unsafe_allow_html=True)
+                        api.connect()
+                        time.sleep(5)
+                        continue
+
+                    # 3. Catalogação e Filtro
+                    lista, _ = catag(api)
+                    if filtro_90:
+                        dados = next((item for item in lista if item[0] == estrat_alvo and float(item[2]) >= 90), None)
+                    else:
+                        dados = next((item for item in lista if item[0] == estrat_alvo), None)
+
+                    if not dados:
+                        status_card.markdown('<div class="card"><div class="label">STATUS</div><div class="value warning">BUSCANDO SINAL...</div></div>', unsafe_allow_html=True)
+                        time.sleep(5)
+                        continue
+
+                    par, assertividade = dados[1], dados[2]
+                    ts = api.get_server_timestamp()
+                    minutos = float(datetime.fromtimestamp(ts).strftime('%M.%S'))
+                    
+                    status_card.markdown(f'<div class="card"><div class="label">{par} | {assertividade}%</div><div class="value" style="color:#58a6ff">⏰ {minutos:.2f}</div></div>', unsafe_allow_html=True)
+
+                    # 4. Verificação de Gatilho
+                    entrar = False
+                    if estrat_alvo == "MHI": entrar = (minutos >= 4.58 and minutos <= 5.00) or (minutos >= 9.58)
+                    elif estrat_alvo == "Torres Gêmeas": entrar = (minutos >= 3.58 and minutos <= 4.00) or (minutos >= 8.58)
+                    elif estrat_alvo == "MHI M5": entrar = (minutos >= 29.58 or minutos >= 59.58)
+
+                    if entrar:
+                        tf = 5 if "M5" in estrat_alvo else 1
+                        velas = api.get_candles(par, tf * 60, 4, ts)
+                        cores = ['Verde' if v['open'] < v['close'] else 'Vermelha' for v in velas]
+                        
+                        ultimas_3 = cores[-3:]
+                        direcao = 'put' if ultimas_3.count('Verde') > ultimas_3.count('Vermelha') else 'call'
+                        
+                        # --- EXECUÇÃO COM MARTINGALE ---
+                        valor_atual = valor_entrada
+                        for gale in range(int(n_gales) + 1):
+                            if not st.session_state.running: break
+                            
+                            status_card.markdown(f'<div class="card"><div class="label">{par}</div><div class="value win">ENTRANDO G{gale}</div></div>', unsafe_allow_html=True)
+                            
+                            ok, id_op = api.buy_digital_spot_v2(par, valor_atual, direcao, tf)
+                            if ok:
+                                resultado = 0
+                                while st.session_state.running:
+                                    status_win, resultado = api.check_win_digital_v2(id_op)
+                                    if status_win:
+                                        st.session_state.lucro_total += round(float(resultado), 2)
+                                        break
+                                    time.sleep(0.5)
+                                
+                                if resultado > 0: # VITÓRIA
+                                    break 
+                                else: # DERROTA -> PRÓXIMO GALE
+                                    valor_atual = round(valor_atual * fator_gale, 2)
+                            else:
+                                break
+                        
+                        time.sleep(30) # Trava para não entrar na mesma vela
+
+                    # 5. Gerenciamento de Stop
+                    if st.session_state.lucro_total >= stop_win or st.session_state.lucro_total <= (stop_loss * -1):
+                        st.session_state.running = False
+                        st.warning("🎯 Meta ou Stop Loss atingido!")
+                        st.rerun()
+
+                except Exception as e:
+                    # Silencia erros temporários de API para não fechar o bot
+                    time.sleep(1)
                 
-                status_card.markdown('<div class="card"><div class="label">STATUS</div><div class="value" style="color:#58a6ff">RODANDO...</div></div>', unsafe_allow_html=True)
-                time.sleep(2)
+                time.sleep(1)
+        else:
+            st.error("Erro de login na IQ Option. Verifique suas credenciais.")
+            st.session_state.running = False
