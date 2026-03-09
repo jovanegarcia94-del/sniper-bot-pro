@@ -1,27 +1,28 @@
 import streamlit as st
-import pandas as pd
 import time
 from iqoptionapi.stable_api import IQ_Option
 from catalogador import catag
 from datetime import datetime
 
-# ---------------- CONFIGURAÇÃO ----------------
+# ---------------- CONFIGURAÇÃO DA PÁGINA ----------------
 st.set_page_config(page_title="Sniper Bot Streamlit", layout="wide")
 
 # ---------------- ESTADOS ----------------
-for key, default in [
-    'rodando', 'lucro_sessao', 'historico', 'estrategia_usuario',
-    'conectado', 'api', 'mg_ativo', 'mg_valor', 'ultimo_ativo'
-]:
+estado_inicial = [
+    ('rodando', False),
+    ('lucro_sessao', 0.0),
+    ('historico', []),
+    ('estrategia_usuario', 'MHI'),
+    ('conectado', False),
+    ('api', None),
+    ('mg_ativo', False),
+    ('mg_valor', 0.0),
+    ('ultimo_ativo', '')
+]
+
+for key, default in estado_inicial:
     if key not in st.session_state:
-        if key in ['rodando','conectado','mg_ativo']:
-            st.session_state[key] = False
-        elif key in ['lucro_sessao','mg_valor']:
-            st.session_state[key] = 0.0
-        elif key in ['historico']:
-            st.session_state[key] = []
-        else:
-            st.session_state[key] = ''
+        st.session_state[key] = default
 
 # ---------------- FUNÇÕES ----------------
 def analisar_entrada(api, ativo, estrategia):
